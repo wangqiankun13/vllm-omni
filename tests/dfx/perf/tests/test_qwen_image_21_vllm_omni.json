@@ -25,6 +25,7 @@
       {
         "name": "512x512_steps20",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": 10,
         "max_concurrency": 1,
@@ -41,6 +42,7 @@
       {
         "name": "1536x1536_steps35",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": 10,
         "max_concurrency": 1,
@@ -81,6 +83,7 @@
       {
         "name": "512x512_steps20",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": 10,
         "max_concurrency": 1,
@@ -124,6 +127,7 @@
       {
         "name": "512x512_steps20",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": 10,
         "max_concurrency": 1,
@@ -140,6 +144,7 @@
       {
         "name": "1536x1536_steps35",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": 10,
         "max_concurrency": 1,
@@ -156,6 +161,7 @@
       {
         "name": "512x512_steps20_high_concurrency",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": [20, 40, 80, 160],
         "max_concurrency": [1, 2, 4, 8],
@@ -199,6 +205,7 @@
       {
         "name": "512x512_steps20",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": 10,
         "max_concurrency": 1,
@@ -215,6 +222,7 @@
       {
         "name": "512x512_steps20_high_concurrency",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": [20, 40, 80, 160],
         "max_concurrency": [1, 2, 4, 8],
@@ -257,6 +265,7 @@
       {
         "name": "512x512_steps20",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": 10,
         "max_concurrency": 1,
@@ -298,6 +307,7 @@
       {
         "name": "512x512_steps20",
         "dataset_name": "random",
+        "tokenizer": "gpt2",
         "endpoint": "/v1/images/generations",
         "num_prompts": 10,
         "max_concurrency": 1,
