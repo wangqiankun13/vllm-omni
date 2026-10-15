@@ -14,7 +14,6 @@
       "diffusion"
     ],
     "description": "Single-device baseline (no parallelism)",
-    "server_type": "vllm-omni",
     "server_params": {
       "model": "Qwen/Qwen-Image-2.1",
       "serve_args": {
@@ -25,25 +24,35 @@
     "benchmark_params": [
       {
         "name": "512x512_steps20",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 512,
-        "height": 512,
-        "num-inference-steps": 20,
-        "num-prompts": 10,
-        "max-concurrency": 1,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": 10,
+        "max_concurrency": 1,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 512,
+          "height": 512,
+          "num_inference_steps": 20,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       },
       {
         "name": "1536x1536_steps35",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 1536,
-        "height": 1536,
-        "num-inference-steps": 35,
-        "num-prompts": 10,
-        "max-concurrency": 1,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": 10,
+        "max_concurrency": 1,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 1536,
+          "height": 1536,
+          "num_inference_steps": 35,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       }
     ]
   },
@@ -62,7 +71,6 @@
       "diffusion"
     ],
     "description": "Single-device baseline (no parallelism)",
-    "server_type": "vllm-omni",
     "server_params": {
       "model": "Qwen/Qwen-Image-2.1",
       "serve_args": {
@@ -72,14 +80,19 @@
     "benchmark_params": [
       {
         "name": "512x512_steps20",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 512,
-        "height": 512,
-        "num-inference-steps": 20,
-        "num-prompts": 10,
-        "max-concurrency": 1,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": 10,
+        "max_concurrency": 1,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 512,
+          "height": 512,
+          "num_inference_steps": 20,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       }
     ]
   },
@@ -98,7 +111,6 @@
       "diffusion"
     ],
     "description": "Single-device step execution: sequential 512/1536 plus 512 concurrency sweep. One server (max-num-seqs 8).",
-    "server_type": "vllm-omni",
     "server_params": {
       "model": "Qwen/Qwen-Image-2.1",
       "serve_args": {
@@ -111,39 +123,52 @@
     "benchmark_params": [
       {
         "name": "512x512_steps20",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 512,
-        "height": 512,
-        "num-inference-steps": 20,
-        "num-prompts": 10,
-        "max-concurrency": 1,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": 10,
+        "max_concurrency": 1,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 512,
+          "height": 512,
+          "num_inference_steps": 20,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       },
       {
         "name": "1536x1536_steps35",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 1536,
-        "height": 1536,
-        "num-inference-steps": 35,
-        "num-prompts": 10,
-        "max-concurrency": 1,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": 10,
+        "max_concurrency": 1,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 1536,
+          "height": 1536,
+          "num_inference_steps": 35,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       },
       {
         "name": "512x512_steps20_high_concurrency",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 512,
-        "height": 512,
-        "num-inference-steps": 20,
-        "num-prompts": [20, 40, 80, 160],
-        "max-concurrency": [1, 2, 4, 8],
-        "warmup-requests": 8,
-        "warmup-concurrency": 8,
-        "warmup-num-inference-steps": 20,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": [20, 40, 80, 160],
+        "max_concurrency": [1, 2, 4, 8],
+        "num_warmups": 8,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 512,
+          "height": 512,
+          "num_inference_steps": 20,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       }
     ]
   },
@@ -162,7 +187,6 @@
       "diffusion"
     ],
     "description": "Single-device step execution: sequential 512 plus 512 concurrency sweep. One server (max-num-seqs 8).",
-    "server_type": "vllm-omni",
     "server_params": {
       "model": "Qwen/Qwen-Image-2.1",
       "serve_args": {
@@ -174,28 +198,36 @@
     "benchmark_params": [
       {
         "name": "512x512_steps20",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 512,
-        "height": 512,
-        "num-inference-steps": 20,
-        "num-prompts": 10,
-        "max-concurrency": 1,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": 10,
+        "max_concurrency": 1,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 512,
+          "height": 512,
+          "num_inference_steps": 20,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       },
       {
         "name": "512x512_steps20_high_concurrency",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 512,
-        "height": 512,
-        "num-inference-steps": 20,
-        "num-prompts": [20, 40, 80, 160],
-        "max-concurrency": [1, 2, 4, 8],
-        "warmup-requests": 8,
-        "warmup-concurrency": 8,
-        "warmup-num-inference-steps": 20,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": [20, 40, 80, 160],
+        "max_concurrency": [1, 2, 4, 8],
+        "num_warmups": 8,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 512,
+          "height": 512,
+          "num_inference_steps": 20,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       }
     ]
   },
@@ -214,7 +246,6 @@
       "diffusion"
     ],
     "description": "Ulysses SP=4",
-    "server_type": "vllm-omni",
     "server_params": {
       "model": "Qwen/Qwen-Image-2.1",
       "serve_args": {
@@ -225,14 +256,19 @@
     "benchmark_params": [
       {
         "name": "512x512_steps20",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 512,
-        "height": 512,
-        "num-inference-steps": 20,
-        "num-prompts": 10,
-        "max-concurrency": 1,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": 10,
+        "max_concurrency": 1,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 512,
+          "height": 512,
+          "num_inference_steps": 20,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       }
     ]
   },
@@ -251,7 +287,6 @@
       "diffusion"
     ],
     "description": "Ulysses SP=4",
-    "server_type": "vllm-omni",
     "server_params": {
       "model": "Qwen/Qwen-Image-2.1",
       "serve_args": {
@@ -262,14 +297,19 @@
     "benchmark_params": [
       {
         "name": "512x512_steps20",
-        "dataset": "random",
-        "task": "t2i",
-        "width": 512,
-        "height": 512,
-        "num-inference-steps": 20,
-        "num-prompts": 10,
-        "max-concurrency": 1,
-        "enable-negative-prompt": true
+        "dataset_name": "random",
+        "endpoint": "/v1/images/generations",
+        "num_prompts": 10,
+        "max_concurrency": 1,
+        "random_input_len": 8,
+        "random_output_len": 1,
+        "percentile_metrics": "e2el",
+        "extra_body": {
+          "width": 512,
+          "height": 512,
+          "num_inference_steps": 20,
+          "negative_prompt": "Negative prompt for benchmarking diffusion models"
+        }
       }
     ]
   }

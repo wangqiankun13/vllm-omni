@@ -323,22 +323,20 @@ steps:
         env:
           DIFFUSION_ATTENTION_BACKEND: TORCH_SDPA
         artifact_paths:
-          - tests/dfx/perf/results/diffusion_result_*.json
-          - tests/dfx/perf/results/logs/*.log
+          - tests/dfx/perf/results/*.json
         commands:
-          - export DIFFUSION_BENCHMARK_DIR=tests/dfx/perf/results
-          - pytest -s -v tests/dfx/perf/scripts/run_diffusion_benchmark.py --test-config-file tests/dfx/perf/tests/test_qwen_image_21_vllm_omni.json -m "H100 and B200 and cards_1"
+          - export BENCHMARK_DIR=tests/dfx/perf/results
+          - pytest -s -v tests/dfx/perf/scripts/run_benchmark.py --test-config-file tests/dfx/perf/tests/test_qwen_image_21_vllm_omni.json -m "H100 and B200 and cards_1"
 
       - label: ":full_moon: Diffusion X2I(&A&T) · Perf Test · Qwen-Image-2.1 · 4-GPU"
         source_file_dependencies: diffusion_qwen_image_21_perf
         key: nightly-diffusion-x2iat-performance-qwen-image-21-4gpu
         timeout_in_minutes: 180
         artifact_paths:
-          - tests/dfx/perf/results/diffusion_result_*.json
-          - tests/dfx/perf/results/logs/*.log
+          - tests/dfx/perf/results/*.json
         commands:
-          - export DIFFUSION_BENCHMARK_DIR=tests/dfx/perf/results
-          - pytest -s -v tests/dfx/perf/scripts/run_diffusion_benchmark.py --test-config-file tests/dfx/perf/tests/test_qwen_image_21_vllm_omni.json -m "H100 and B200 and cards_4"
+          - export BENCHMARK_DIR=tests/dfx/perf/results
+          - pytest -s -v tests/dfx/perf/scripts/run_benchmark.py --test-config-file tests/dfx/perf/tests/test_qwen_image_21_vllm_omni.json -m "H100 and B200 and cards_4"
 
   - group: ":card_index_dividers: Diffusion X2V Model Test"
     key: nightly-diffusion-x2v-group
