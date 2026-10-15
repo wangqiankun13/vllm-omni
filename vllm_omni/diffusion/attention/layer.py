@@ -43,11 +43,6 @@ from vllm_omni.platforms import current_omni_platform
 
 logger = init_logger(__name__)
 
-# Flash-family backends route a present attn_mask through `_forward_varlen_masked`,
-# which only accepts a 2D (batch_size, seq_len) padding mask. A 4D dense mask (used
-# to encode a mixed causal/full block pattern) cannot be consumed by that path.
-_FLASH_VARLEN_MASK_2D_BACKENDS = frozenset({"FLASH_ATTN", "FLASH_ATTN_HUB", "FLASH_ATTN_3_HUB"})
-
 
 def _try_extract_layer_index(prefix: str) -> int | None:
     if not prefix:
@@ -632,31 +627,6 @@ class Attention(nn.Module):
             logger.warning_once(
                 "The startup KV memory profile is using SDPA because dense FLASH_ATTN is unavailable. "
                 "Formal paged requests still use the platform-native paged attention backend."
-            )
-            return cast(AttentionImpl, self.sdpa_fallback).forward(query, key, value, attn_metadata)
-
-        # A 4D dense attn_mask encodes a mixed causal/full block pattern, but the
-        # Flash masked-varlen path only accepts 2D (batch, seq) padding masks and
-        # would assert in the backend. SDPA consumes the 4D mask natively, so route
-        # this layer to it. Piecewise metadata (full_attn_spans) is checked first by
-        # the backend and never reads attn_mask, so only the span-less case is at
-        # risk. Skipped when the user explicitly selected a backend (that must run or
-        # raise) and under sequence parallelism, where the mask's key dimension no
-        # longer matches the rank-local query.
-        if (
-            attn_metadata is not None
-            and attn_metadata.attn_mask is not None
-            and attn_metadata.attn_mask.ndim == 4
-            and attn_metadata.full_attn_spans is None
-            and self.attn_backend is not None
-            and self.attn_backend.get_name() in _FLASH_VARLEN_MASK_2D_BACKENDS
-            and self._get_active_parallel_strategy() is self._no_parallel_strategy
-            and not self.backend_explicit
-        ):
-            assert self.sdpa_fallback is not None
-            logger.warning_once(
-                "Using SDPA: a 4D attn_mask was provided but the selected attention backend only "
-                "accepts 2D masks on its packed/varlen path."
             )
             return cast(AttentionImpl, self.sdpa_fallback).forward(query, key, value, attn_metadata)
 
