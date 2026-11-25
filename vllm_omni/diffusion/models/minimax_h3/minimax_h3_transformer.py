@@ -1371,6 +1371,15 @@ class MiniMaxH3DiTModel(nn.Module):
             device=device,
         )
 
+    def _run_blocks(self, hidden, *, hints=None, control_scale=1.0, block_projections=None, **kwargs):
+        for i, block in enumerate(self.blocks):
+            if block_projections is not None:
+                kwargs["projected_adaln"] = block_projections[i]
+            hidden = block(hidden, **kwargs)
+            if hints and i in hints:
+                hidden = hidden + hints.pop(i) * control_scale
+        return hidden
+
     def forward(self, *, pdd_step: int | None = None, **kwargs: Any) -> tuple[torch.Tensor, torch.Tensor]:
         """Packed inference forward.
 
@@ -1604,24 +1613,32 @@ class MiniMaxH3DiTModel(nn.Module):
         if getattr(self, "adaln_cache", None) is not None:
             self.adaln_cache.prepare(t_emb)
 
-        for block_index, block in enumerate(self.blocks):
-            hidden = block(
-                hidden,
-                t_emb=t_emb,
-                combined_indices=block_combined,
-                rope_table=block_rope,
-                cu_seqlens=cu_seqlens,
-                max_seqlen=block_max_seqlen,
-                packed_total=block_packed_total,
-                num_requests=num_requests,
-                video_layout=block_video_layout,
-                vsa_prefix_segments=(() if compact_reference else vsa_prefix_segments),
-                reference_kv_state=reference_kv_state,
-                reference_kv_compact=compact_reference,
-                vdn_window=vdn_window,
-            )
-            if block_index in hints:
-                hidden = hidden + hints.pop(block_index) * control_scale
+        block_kwargs = dict(
+            t_emb=t_emb,
+            combined_indices=block_combined,
+            rope_table=block_rope,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=block_max_seqlen,
+            packed_total=block_packed_total,
+            num_requests=num_requests,
+            video_layout=block_video_layout,
+            vsa_prefix_segments=(() if compact_reference else vsa_prefix_segments),
+            reference_kv_state=reference_kv_state,
+            reference_kv_compact=compact_reference,
+            vdn_window=vdn_window,
+        )
+        controller = getattr(self, "head_split_controller", None)
+        if controller is not None:
+            if hints or reference_kv_state is not None or vdn_window is not None:
+                raise ValueError("ulysses_head_split requires dense MiniMax-H3 T2VA without control or reference KV")
+            # Make exact per-step AdaLN values explicit graph inputs. Capturing
+            # the cache hits by address would need a new graph for every schedule
+            # entry and head partition, even when all tensor shapes are identical.
+            if self.adaln_cache is not None:
+                block_kwargs["block_projections"] = self.adaln_cache.graph_block_projections(self.blocks, t_emb)
+            hidden = controller.run_blocks(self._run_blocks, hidden, block_kwargs)
+        else:
+            hidden = self._run_blocks(hidden, hints=hints, control_scale=control_scale, **block_kwargs)
         if local_len == seq_len:
             hidden = self.sp_gather(hidden)
             final_inverse_indices = (

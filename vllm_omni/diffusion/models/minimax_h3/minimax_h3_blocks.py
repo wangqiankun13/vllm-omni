@@ -746,6 +746,9 @@ class MiniMaxH3AdalnProj(nn.Module):
             self._adaln_cache.max_bytes > 0 or self._offload_weights
         )
         x = self._project_cached(t_emb) if use_cache_boundary else self._project(t_emb)
+        return self.split_parameters(x)
+
+    def split_parameters(self, x: torch.Tensor) -> tuple[torch.Tensor, ...]:
         m = x.shape[0]
         x = x.view(m * self.modality_num, self.expand_ratio * self.hidden_size)
         return tuple(x.chunk(self.expand_ratio, dim=-1))
@@ -808,6 +811,7 @@ class MiniMaxH3DiTBlock(nn.Module):
         max_seqlen: int,
         packed_total: int,
         num_requests: int = 1,
+        projected_adaln: torch.Tensor | None = None,
         sp_seq_lens: list[int] | None = None,
         video_layout: VideoTokenLayout | None = None,
         vsa_prefix_segments: tuple[int, ...] = (),
@@ -829,7 +833,7 @@ class MiniMaxH3DiTBlock(nn.Module):
             shift_mlp,
             scale_mlp,
             gate_mlp,
-        ) = self.adaln_proj(t_emb)
+        ) = self.adaln_proj(t_emb) if projected_adaln is None else self.adaln_proj.split_parameters(projected_adaln)
 
         residual = x
         h = rms_norm_indexed_scale_shift(

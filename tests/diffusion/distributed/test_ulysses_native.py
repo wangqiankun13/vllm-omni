@@ -132,7 +132,7 @@ def _split_worker(rank, init_method, world):
     from vllm_omni.diffusion.attention.layer import Attention
     from vllm_omni.diffusion.config import set_current_diffusion_config
     from vllm_omni.diffusion.data import DiffusionParallelConfig, OmniDiffusionConfig
-    from vllm_omni.diffusion.distributed.head_split import HeadSplitAttention, head_partitions
+    from vllm_omni.diffusion.distributed.head_split import HeadSplitAttention, HeadSplitTrials, head_partitions
     from vllm_omni.diffusion.forward_context import get_forward_context, set_forward_context
 
     device = torch.device("cuda", rank)
@@ -182,6 +182,37 @@ def _split_worker(rank, init_method, world):
                         dist.all_gather_object(peers, winner, group=pg)
                         assert all(w == winner for w in peers)
             assert get_forward_context().head_split_trials is None
+            # Capture once, then replay with new Q and request-owned K/V at the
+            # same addresses in the graph. Reusing a stale prefix changes the result.
+            controller = HeadSplitAttention(head_partitions("3:5", heads, world), pg)
+            layer.head_split = controller
+
+            def block(hidden, *, kv_cache, cache_branch, key, value):
+                kv = kv_cache[0][cache_branch]
+                md = replace(decode, joint_key=kv["key"], joint_value=kv["value"])
+                return layer(hidden, key, value, md) + 1
+
+            first_graph = None
+            for offset, length in ((0, 13), (2, 13), (1, 9), (3, 13)):
+                pk, pv = prefix[1][:, :length] + offset, prefix[2][:, :length] - offset
+                cache = [{"cond": {"key": pk, "value": pv}}]
+                with set_forward_context(omni_diffusion_config=cfg):
+                    get_forward_context().head_split_trials = HeadSplitTrials(controller.candidates)
+                    for step in (1, 2):
+                        incoming = q + step
+                        expected = layer._forward_impl(incoming, k, v, replace(decode, joint_key=pk, joint_value=pv))
+                        with controller.blocks.request_stream():
+                            actual = controller.run_blocks(
+                                block, incoming, {"key": k, "value": v, "cache_branch": "cond"}, kv_cache=cache
+                            )
+                        torch.testing.assert_close(actual, expected + 1, atol=0.01, rtol=0.01)
+                        entry = next(iter(controller.blocks.entries.values()))
+                        if first_graph is None:
+                            first_graph = entry[0]
+                        if offset in (0, 2):
+                            assert entry[0] is first_graph
+                        else:
+                            assert entry[0] is not first_graph
             # The bound is on the global sequence, independent of the SP degree.
             shard_over_limit = 8576 // world + 1
             oversized = q[:, :1].expand(-1, shard_over_limit, -1, -1)

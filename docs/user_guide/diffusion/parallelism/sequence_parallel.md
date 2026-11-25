@@ -275,7 +275,10 @@ maximum over the Ulysses group. Trials preserve native outputs. A candidate
 must match all sampled native outputs on every rank and beat native by at
 least 1% to displace it. Qwen keeps its block-causal prefill and uses its
 real target rows to probe the decode shape. Cold graph capture, probing,
-and accuracy checks contribute to request latency.
+and accuracy checks contribute to request latency. On the 56-head H3 model
+at SP4, automatic selection tests native, 7+7, 1+12+1, and 5+9. Each H3
+candidate and its native control are timed around graph replay after staging
+the same packed inputs. The full request pays for staging and comparison.
 
 Both modes require peer-accessible GPUs on one node, CUDA BF16 FlashAttention-3,
 pure strict CE Ulysses, and one request per forward. Qwen supports SP2 and
@@ -283,10 +286,29 @@ SP4. MiniMax-H3 requires SP4 and `task_type=t2va`. Qwen supports unpadded, block
 and cached-prefix decode. Both split modes accept H3 dense attention up to
 8,576 global packed rows (including padding, summed over SP ranks). A tested
 512×512, 107-frame request fits this limit. A 1344×768, 124-frame request
-exceeds it. Use the original attention path for longer H3 requests. The split core uses its own CUDA Graph. Set `enforce_eager=True`
-on the outer model and disable step execution, denoise graphs, attention
-schedules and transformer cache acceleration. SP8+, Ring, GQA, TP, HSDP,
+exceeds it. Use the original attention path for longer H3 requests.
+
+Set `enforce_eager=True` on the outer model. After the first step, the selected
+route replays the DiT block stack in one CUDA Graph per step. Qwen refreshes
+the static prefix KV for each request. H3 stages exact AdaLN projections for each time embedding as graph inputs,
+so the same graph can replay at different timesteps. A new geometry or route can incur
+warm-up and capture latency. The graph requires resident, stationary DiT
+weights. Disable DiT weight offload, sleep, LoRA, weight transfer, step execution,
+outer denoise graphs, attention schedules and transformer cache acceleration. SP8+, Ring, GQA, TP, HSDP,
 and masked or reference-KV H3 attention are unsupported.
+
+To measure a fixed workload through `Omni.generate`, supply a JSON object
+with `engine` (Omni engine kwargs), `prompt` (including modalities and any
+reference image), and `sampling` (shape, steps and guidance). Run the native
+arm first. Use the same output directory for the other arms to compare RGB
+pixels and H3 audio against the corresponding seed.
+
+```bash
+for policy in native 3:5 auto; do
+  python -m benchmarks.diffusion.bench_ulysses_head_split --workload qwen.json \
+    --output results/qwen --policy "$policy" --rounds 9
+done
+```
 
 ## Best Practices
 

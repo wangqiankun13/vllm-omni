@@ -51,15 +51,36 @@ class MiniMaxH3RuntimeAdalnCache(ExactProjectionCache):
     def __init__(self, *, max_bytes: int = 256 * 1024**2, offload_weights: bool = False) -> None:
         super().__init__(max_bytes=max_bytes)
         self.offload_weights = offload_weights
+        self._graph_projections: dict[tuple[str, tuple[Any, ...]], torch.Tensor] = {}
         self.sidecar: MiniMaxH3AdalnCache | None = None
         self._sidecar_signatures: dict[str, Any] = {}
         self._sidecar_plan: int | None = None
 
     def clear(self) -> None:
         super().clear()
+        self._graph_projections.clear()
         self.sidecar = None
         self._sidecar_signatures.clear()
         self._sidecar_plan = None
+
+    def graph_block_projections(self, blocks: nn.ModuleList, embedding: torch.Tensor) -> torch.Tensor | None:
+        """Pack exact projections into one mutable graph input for the resident-weight DiT."""
+        if self._key is None:
+            return None
+        key = self._key, self._numerical_settings(embedding.device.type)
+        cached = self._graph_projections.get(key)
+        if cached is not None:
+            return cached
+        packed = torch.stack([block.adaln_proj._project_cached(embedding) for block in blocks])
+        if packed.nbytes <= self.max_bytes:
+            # The packed tensor and the ordinary per-layer entries share one budget.
+            while self._graph_projections and self._bytes + packed.nbytes > self.max_bytes:
+                oldest = next(iter(self._graph_projections))
+                self._bytes -= self._graph_projections.pop(oldest).nbytes
+            if self._bytes + packed.nbytes <= self.max_bytes:
+                self._graph_projections[key] = packed
+                self._bytes += packed.nbytes
+        return packed
 
     def seed(self, sidecar: MiniMaxH3AdalnCache, modules: Mapping[str, nn.Module]) -> None:
         # A rejected seed must not retain the sidecar's device payload.

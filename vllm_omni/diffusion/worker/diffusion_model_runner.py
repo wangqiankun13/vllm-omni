@@ -447,7 +447,7 @@ class DiffusionModelRunner(DiffusionStagePayloadMixin):
         if getattr(getattr(self.od_config, "parallel_config", None), "ulysses_head_split", None) is not None:
             from vllm_omni.diffusion.distributed.head_split import configure_head_split
 
-            configure_head_split(self.pipeline, self.od_config)
+            self.head_split_controller = configure_head_split(self.pipeline, self.od_config)
         time_after_load = time.perf_counter()
 
         logger.info(
@@ -925,7 +925,10 @@ class DiffusionModelRunner(DiffusionStagePayloadMixin):
             and getattr(getattr(od_config, "parallel_config", None), "ulysses_head_split", None) is not None
         ):
             raise ValueError("ulysses_head_split supports one diffusion request per batch")
+        head_split = getattr(self, "head_split_controller", None)
         for req in reqs:
+            if head_split is not None and req.sampling_params.lora_request:
+                raise ValueError("ulysses_head_split block graphs do not support per-request LoRA")
             if req.prompt is None:
                 raise ValueError("Cannot execute model with empty prompt")
         if require_request_batch_support and not getattr(self.pipeline, "supports_request_batch", False):
@@ -934,6 +937,8 @@ class DiffusionModelRunner(DiffusionStagePayloadMixin):
         sampling_params = [req.sampling_params for req in reqs]
         attention_schedule = resolve_batch_attention_schedule(sampling_params, service)
         sigma_schedule = resolve_batch_attention_sigma_schedule(sampling_params, service)
+        if head_split is not None and (attention_schedule or sigma_schedule):
+            raise ValueError("ulysses_head_split block graphs require a fixed attention backend across steps")
 
         # Use no_grad() for HSDP compatibility, inference_mode() otherwise for
         # better perf. HSDP2's fully_shard pre-forward hooks need tensor version
@@ -1010,6 +1015,7 @@ class DiffusionModelRunner(DiffusionStagePayloadMixin):
                     in_diffusion_kv_memory_profile=in_diffusion_kv_memory_profile,
                 ),
                 paged_kv_context,
+                head_split.blocks.request_stream() if head_split is not None else nullcontext(),
                 request_cancellation_scope(
                     [getattr(req, "cancellation_signal", None) for req in reqs],
                     enabled=getattr(self.pipeline, "supports_request_cancellation", False) is True,

@@ -36,7 +36,7 @@ def parse_head_split(spec: str) -> tuple[int, ...]:
     return tuple(w // divisor for w in weights)
 
 
-def head_partitions(spec: str, heads: int, world: int) -> tuple[tuple[int, ...], ...]:
+def head_partitions(spec: str, heads: int, world: int, *, packed: bool = False) -> tuple[tuple[int, ...], ...]:
     if world not in (2, 4) or heads <= 0 or heads % world:
         raise ValueError(f"ulysses_head_split requires SP2 or SP4 evenly dividing the {heads} attention heads")
     local = heads // world
@@ -51,7 +51,7 @@ def head_partitions(spec: str, heads: int, world: int) -> tuple[tuple[int, ...],
     half, edge, first = local // 2, max(2, local // 6), max(1, round(3 * local / 8))
     # Empty tuple denotes the official whole-head implementation. The one-group
     # direct exchange is also eligible: it removes copies but has no overlap.
-    candidates = (
+    candidates: tuple[tuple[int, ...], ...] = (
         (),
         (local,),
         (half, local - half),
@@ -59,6 +59,10 @@ def head_partitions(spec: str, heads: int, world: int) -> tuple[tuple[int, ...],
         (edge, local - 2 * edge, edge),
         (first, local - first),
     )
+    if packed:
+        # The packed H3 trial also evaluates each layer's native output. Keep
+        # balanced, asymmetric and short-tail overlap candidates in that budget.
+        candidates = ((), (half, local - half), (1, local - 2, 1), (first, local - first))
     return tuple(dict.fromkeys(parts for parts in candidates if all(w > 0 for w in parts)))
 
 
@@ -68,12 +72,15 @@ class HeadSplitTrials:
         self.samples: list[tuple[torch.Event, torch.Event, torch.Tensor]] = []
         self.winner: tuple[int, ...] | None = candidates[0] if len(candidates) == 1 else None
 
-    def measure(self, run, reference, pg, device):
+    def measure(self, run, reference, pg, device, *, timed_run=None):
         width = self.candidates[len(self.samples) // 4]
         start, end = (torch.Event(device=device, enable_timing=True) for _ in range(2))
-        start.record()
-        out = run(width)
-        end.record()
+        if timed_run is None:
+            start.record()
+            out = run(width)
+            end.record()
+        else:
+            out = timed_run(width, start, end)
         if reference is None:
             reference = run(()) if width else out
         mismatch = (out != reference).any() if width else torch.zeros((), device=device, dtype=torch.bool)
@@ -186,11 +193,37 @@ class HeadSplitAttention:
     """One geometry cache per loaded DiT. The timing decision belongs to its request."""
 
     def __init__(self, candidates, pg):
+        from vllm_omni.platforms.cuda.ulysses_head_split import HeadSplitBlockGraphs
+
+        self.blocks = HeadSplitBlockGraphs(pg)
         self.candidates = candidates
         self.pg = pg
         self.world = dist.get_world_size(pg)
+        self.in_block_graph = False
         self.signature = None
         self.graphs: HeadSplitGraphs | None = None
+
+    def run_blocks(self, forward, hidden, kwargs, *, kv_cache=None):
+        from vllm_omni.diffusion.distributed.a2a_permute import _SYMM_WORKSPACES
+        from vllm_omni.diffusion.forward_context import get_forward_context
+
+        ctx = get_forward_context()
+        trials = ctx.head_split_trials
+        if trials is None or trials.winner is None or ctx.denoise_step_idx == 0:
+            if kv_cache is not None:
+                kwargs = dict(kwargs, kv_cache=kv_cache)
+            return forward(hidden, **kwargs)
+
+        def keep_transport():
+            # The official CE workspace can grow on a later request. Its old
+            # peer pointers remain embedded in any resident native-route graph.
+            return self.graphs, _SYMM_WORKSPACES.get((hidden.device, self.pg.group_name))
+
+        self.in_block_graph = True
+        try:
+            return self.blocks.run(forward, hidden, kwargs, trials, keep_transport, kv_cache=kv_cache)
+        finally:
+            self.in_block_graph = False
 
     def __call__(self, layer: Attention, q, k, v, md: AttentionMetadata | None) -> torch.Tensor:
         from vllm_omni.diffusion.forward_context import get_forward_context
@@ -236,12 +269,11 @@ class HeadSplitAttention:
         else:
             target_md = md
 
-        def run(widths):
-            if not widths:
-                return layer._forward_impl(q, k, v, replace(target_md))
+        def transport():
             signature = (
                 q.device,
                 tuple(q.shape),
+                tuple(p.stride(1) for p in (q, k, v)),
                 tuple(p.shape for p in prefix),
                 maxima,
                 tuple(b.numel() for b in boundaries),
@@ -258,12 +290,26 @@ class HeadSplitAttention:
                 self.graphs = HeadSplitGraphs((q, k, v), prefix, boundaries, maxima, layer.softmax_scale, self.pg)
                 self.signature = signature
             assert self.graphs is not None
-            return self.graphs.run(widths, (q, k, v), prefix, boundaries)
+            return self.graphs
+
+        def run(widths):
+            if not widths:
+                if probing and boundaries:
+                    # timed_packed already staged these exact inputs and ran
+                    # the native candidate first. Reuse that graph for the
+                    # accuracy comparison, outside the candidate's timer.
+                    return transport().packed_reference()
+                return layer._forward_impl(q, k, v, replace(target_md))
+            return transport().run(widths, (q, k, v), prefix, boundaries, in_block_graph=self.in_block_graph)
 
         if probing:
             # Trials cannot change the state that subsequent layers observe.
             reference = output[:, -q.size(1) :] if prefill else None
-            result = trials.measure(run, reference, self.pg, q.device)
+
+            def timed_packed(widths, start, end):
+                return transport().timed_packed(widths, (q, k, v), target_md, layer, start, end)
+
+            result = trials.measure(run, reference, self.pg, q.device, timed_run=timed_packed if boundaries else None)
         else:
             result = run(trials.winner)
         return output if prefill else result
@@ -296,6 +342,15 @@ def configure_head_split(pipeline, config):
         raise ValueError("ulysses_head_split does not support fa_deterministic")
     if not current_omni_platform.is_cuda() or vllm_varlen_version_kwargs(flash_attn_varlen_func) != {"fa_version": 3}:
         raise ValueError("ulysses_head_split requires CUDA and the vLLM FlashAttention-3 varlen backend")
+    from vllm_omni.diffusion.offloader.config import DIT_COMPONENT, should_offload_component
+
+    if (
+        should_offload_component(config, DIT_COMPONENT)
+        or config.enable_sleep_mode
+        or config.lora_path
+        or config.weight_transfer_config
+    ):
+        raise ValueError("ulysses_head_split block graphs require stationary DiT weights without LoRA or offload")
     if name == "QwenImage21Pipeline":
         layers = [block.attn.attn for block in pipeline.transformer.transformer_blocks]
     elif name == "MiniMaxH3Pipeline" and str(config.task_type).lower() == "t2va":
@@ -313,10 +368,13 @@ def configure_head_split(pipeline, config):
     if world != config.parallel_config.ulysses_degree:
         raise ValueError("ulysses_head_split process group does not match configured degree")
     heads = layers[0].num_heads
-    candidates = head_partitions(config.parallel_config.ulysses_head_split, heads, world)
+    candidates = head_partitions(
+        config.parallel_config.ulysses_head_split, heads, world, packed=name == "MiniMaxH3Pipeline"
+    )
     if len(candidates) > 1 and len(layers) < 4 * len(candidates):
         raise ValueError("ulysses_head_split=auto needs four first-step layers per candidate")
     controller = HeadSplitAttention(candidates, pg)
+    pipeline.transformer.head_split_controller = controller
     for layer in layers:
         if (
             layer.num_heads != heads
@@ -340,3 +398,4 @@ def configure_head_split(pipeline, config):
             world,
             heads // world,
         )
+    return controller

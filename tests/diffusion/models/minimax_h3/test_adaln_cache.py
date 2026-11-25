@@ -162,6 +162,29 @@ def test_weight_adapter_schedule_and_uncovered_timestep_checks(tmp_path):
         cache.lookup(torch.tensor([0.123]))
 
 
+def test_graph_block_projections_follow_embedding_and_invalidation():
+    cache = MiniMaxH3RuntimeAdalnCache(max_bytes=16)
+    projection = SimpleNamespace(_project_cached=lambda x: x * 2)
+    layers = [SimpleNamespace(adaln_proj=projection)]
+    with torch.no_grad():
+        a, b = torch.ones(4), torch.zeros(4)
+        cache.prepare(a)
+        first = cache.graph_block_projections(layers, a)
+        assert cache.graph_block_projections(layers, a) is first
+        assert cache._bytes == cache.max_bytes
+        cache.prepare(b)
+        torch.testing.assert_close(cache.graph_block_projections(layers, b), (b * 2).unsqueeze(0))
+        cache.prepare(a)
+        second = cache.graph_block_projections(layers, a)
+        assert second is not first
+        torch.testing.assert_close(second, first)
+        cache.clear()
+        assert cache.graph_block_projections(layers, a) is None
+        assert cache._bytes == 0
+        cache.prepare(a)
+        assert cache.graph_block_projections(layers, a) is not second
+
+
 def test_adapter_switch_invalidates_runtime_cache(mocker):
     pipeline = object.__new__(MiniMaxH3Pipeline)
     torch.nn.Module.__init__(pipeline)

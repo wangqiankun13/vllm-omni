@@ -1492,22 +1492,25 @@ class QwenImage21Transformer2DModel(CachedTransformer):
                 pointwise_validated = pointwise_eligible(
                     joint_hidden_states, prepared_modulation[1], prepared_modulation[3]
                 )
-        for index_block, block in enumerate(self.transformer_blocks):
-            block_kv_cache = kv_cache[index_block] if kv_cache is not None else None
-            joint_hidden_states = block(
-                hidden_states=joint_hidden_states,
-                modulation=modulation,
-                freqs=freqs,
-                target_token_mask=local_mask,
-                attn_metadata=attn_metadata,
-                sp_prefix_len=sp_prefix_len,
-                sp_decode=sp_active and is_decode,
-                kv_cache=block_kv_cache,
-                cache_branch=cache_branch,
-                cache_write_len=cache_write_len,
-                prepared_modulation=prepared_modulation,
-                _pointwise_validated=pointwise_validated,
+        block_kwargs = dict(
+            modulation=modulation,
+            freqs=freqs,
+            target_token_mask=local_mask,
+            attn_metadata=attn_metadata,
+            sp_prefix_len=sp_prefix_len,
+            sp_decode=sp_active and is_decode,
+            cache_branch=cache_branch,
+            cache_write_len=cache_write_len,
+            prepared_modulation=prepared_modulation,
+            _pointwise_validated=pointwise_validated,
+        )
+        controller = getattr(self, "head_split_controller", None)
+        if controller is not None and is_decode:
+            joint_hidden_states = controller.run_blocks(
+                self._run_blocks, joint_hidden_states, block_kwargs, kv_cache=kv_cache
             )
+        else:
+            joint_hidden_states = self._run_blocks(joint_hidden_states, kv_cache=kv_cache, **block_kwargs)
 
         if (
             not is_decode
@@ -1540,6 +1543,11 @@ class QwenImage21Transformer2DModel(CachedTransformer):
             return (output,)
 
         return Transformer2DModelOutput(sample=output)
+
+    def _run_blocks(self, hidden, *, kv_cache, **kwargs):
+        for i, block in enumerate(self.transformer_blocks):
+            hidden = block(hidden_states=hidden, kv_cache=kv_cache[i] if kv_cache is not None else None, **kwargs)
+        return hidden
 
     def _decode_graph_forward(self, entry) -> torch.Tensor:
         """The exact decode-step computation, captured into a CUDA graph.

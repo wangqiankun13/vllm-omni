@@ -102,6 +102,13 @@ def test_head_split_invalid(world, heads, ratio):
         head_partitions(ratio, heads, world)
 
 
+def test_packed_selector_keeps_balanced_asymmetric_and_short_tail_trials():
+    from vllm_omni.diffusion.distributed.head_split import head_partitions
+
+    assert head_partitions("auto", 56, 4, packed=True) == ((), (7, 7), (1, 12, 1), (5, 9))
+    assert head_partitions("2:10:2", 56, 4, packed=True) == ((2, 10, 2),)
+
+
 def test_head_split_config_is_opt_in():
     from vllm_omni.diffusion.data import DiffusionParallelConfig
 
