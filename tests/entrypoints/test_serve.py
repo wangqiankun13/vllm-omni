@@ -758,8 +758,9 @@ def test_serve_parser_accepts_ulysses_a2a_permute() -> None:
     subparsers = parser.add_subparsers(dest="subcommand")
     OmniServeCommand().subparser_init(subparsers)
 
-    args = parser.parse_args(["serve", "fake-model", "--omni", "--ulysses-a2a-permute"])
+    args = parser.parse_args(["serve", "fake-model", "--omni", "--ulysses-a2a-permute", "--ulysses-head-split", "3:5"])
 
+    assert args.get_explicit_kwargs_dict()["ulysses_head_split"] == "3:5"
     assert args.ulysses_a2a_permute is True
     assert args.get_explicit_kwargs_dict()["ulysses_a2a_permute"] is True
 

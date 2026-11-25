@@ -804,6 +804,11 @@ class OmniServeCommand(CLISubcommand):
             "'advanced_uaa' enables the experimental UAA path for uneven sequence/head shapes.",
         )
         omni_config_group.add_argument(
+            "--ulysses-head-split",
+            default=None,
+            help="Overlap CE and attention by splitting each rank's heads (e.g. 1:1, 3:5, or auto).",
+        )
+        omni_config_group.add_argument(
             "--ulysses-a2a-permute",
             action=argparse.BooleanOptionalAction,
             default=None,

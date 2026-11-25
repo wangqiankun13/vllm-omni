@@ -251,6 +251,43 @@ vllm serve Qwen/Qwen-Image --omni --ulysses-degree 2 --ulysses-a2a-permute
 On NPU, the flag retains the existing
 [NPU symmetric-memory requirements](../../../design/feature/sequence_parallel.md#npu-symmetric-memory-ulysses).
 
+### Overlap strict Ulysses CE with attention (experimental)
+
+Qwen-Image-2.1 and MiniMax-H3 T2VA can pipeline Q/K/V transfers, attention,
+and output transfers across groups of heads. Omit `--ulysses-head-split` to
+use the existing attention path. The flag accepts two forms.
+
+| Setting | Behavior |
+| --- | --- |
+| A ratio such as `3:5` or `1:12:1` | Split the heads assigned to **each rank** into two or three groups in that exact ratio. |
+| `auto` | Time candidates on successive first-step layers for each request. The original whole-head CE implementation participates. |
+
+For example, add `--ulysses-degree 4 --ulysses-a2a-permute --enforce-eager --ulysses-head-split 3:5`
+to a Qwen-Image-2.1 invocation. With 32 heads this gives 3 and 5 heads per rank.
+At SP2 the same ratio gives 6 and 10. For a 56-head H3 model at SP4,
+`5:9` or `1:12:1` consumes the 14 heads per rank. Ratios requiring
+fractional heads raise an error. The Python and stage YAML field is
+`ulysses_head_split` under `parallel_config`.
+
+Each automatic trial uses four layers. The first warms the route. The score
+is the median of the three remaining attention-call times, each reduced by
+maximum over the Ulysses group. Trials preserve native outputs. A candidate
+must match all sampled native outputs on every rank and beat native by at
+least 1% to displace it. Qwen keeps its block-causal prefill and uses its
+real target rows to probe the decode shape. Cold graph capture, probing,
+and accuracy checks contribute to request latency.
+
+Both modes require peer-accessible GPUs on one node, CUDA BF16 FlashAttention-3,
+pure strict CE Ulysses, and one request per forward. Qwen supports SP2 and
+SP4. MiniMax-H3 requires SP4 and `task_type=t2va`. Qwen supports unpadded, block-causal prefix prefill
+and cached-prefix decode. Both split modes accept H3 dense attention up to
+8,576 global packed rows (including padding, summed over SP ranks). A tested
+512×512, 107-frame request fits this limit. A 1344×768, 124-frame request
+exceeds it. Use the original attention path for longer H3 requests. The split core uses its own CUDA Graph. Set `enforce_eager=True`
+on the outer model and disable step execution, denoise graphs, attention
+schedules and transformer cache acceleration. SP8+, Ring, GQA, TP, HSDP,
+and masked or reference-KV H3 attention are unsupported.
+
 ## Best Practices
 
 ### When to Use

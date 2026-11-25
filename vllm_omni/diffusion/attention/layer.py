@@ -70,6 +70,7 @@ from vllm_omni.platforms import current_omni_platform
 
 if TYPE_CHECKING:
     from vllm_omni.diffusion.data import AttentionScheduleConfig, AttentionSpec, OmniDiffusionConfig
+    from vllm_omni.diffusion.distributed.head_split import HeadSplitAttention
 
 logger = init_logger(__name__)
 
@@ -432,6 +433,7 @@ class ScheduleCandidate:
 
 
 class Attention(nn.Module):
+    head_split: "HeadSplitAttention | None" = None
     _scheduler_paged_kv = False
     _has_custom_attention = False
     # Whether this layer saw a schedule at construction. Attention can be built with no current
@@ -931,6 +933,8 @@ class Attention(nn.Module):
         value: torch.Tensor,
         attn_metadata: AttentionMetadata | None = None,
     ) -> torch.Tensor:
+        if self.head_split is not None:
+            return self.head_split(self, query, key, value, attn_metadata)
         if attn_metadata is not None and attn_metadata.extra.get(MIXFUSION_PLAN_KEY) is not None:
             # MixFusion chunked layout: recover each request to
             # ``text + full image`` right before the kernel and scatter back

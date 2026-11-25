@@ -27,6 +27,7 @@ from vllm_omni.diffusion.data import OmniDiffusionConfig
 
 if TYPE_CHECKING:
     from vllm_omni.diffusion.diffusion_kv.paged_attention_adapter import DiffusionPagedAttentionRuntime
+    from vllm_omni.diffusion.distributed.head_split import HeadSplitTrials
 
 
 @dataclass
@@ -72,6 +73,7 @@ class ForwardContext:
     # Attention layers use this explicit scope to distinguish that probe from
     # a malformed paged request whose Worker adapter was not activated.
     in_diffusion_kv_memory_profile: bool = False
+    head_split_trials: HeadSplitTrials | None = None
     split_text_embed_in_sp: bool = False
     denoise_step_idx: int | None = None
     denoise_timestep: float | None = None

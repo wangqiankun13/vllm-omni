@@ -10,7 +10,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from tests.helpers.mark import hardware_marks
+from tests.helpers.mark import hardware_marks, hardware_test
 from vllm_omni.diffusion.attention.backends.abstract import AttentionMetadata
 from vllm_omni.diffusion.attention.parallel.ulysses import UlyssesParallelAttention
 from vllm_omni.diffusion.distributed.parallel_state import (
@@ -21,7 +21,7 @@ from vllm_omni.diffusion.distributed.parallel_state import (
 )
 from vllm_omni.platforms import current_omni_platform
 
-pytestmark = [pytest.mark.local_model, *hardware_marks(res={"cuda": "H100"}, num_cards=4)]
+pytestmark = pytest.mark.local_model
 
 
 def _reference(x, mode, pg):
@@ -118,7 +118,92 @@ def _worker(rank, init_method, world_size=4):
         destroy_distributed_env()
 
 
+@hardware_test(res={"cuda": "H100"}, num_cards=4)
 def test_native_ulysses_transport(tmp_path):
     if torch.accelerator.device_count() < 4:
         pytest.skip("Requires four scheduler-allocated NVLink GPUs")
     torch.multiprocessing.spawn(_worker, args=(f"file://{tmp_path / 'rendezvous'}",), nprocs=4)
+
+
+def _split_worker(rank, init_method, world):
+    from dataclasses import replace
+
+    from vllm_omni.diffusion.attention.backends.abstract import PackedPaddingMetadata
+    from vllm_omni.diffusion.attention.layer import Attention
+    from vllm_omni.diffusion.config import set_current_diffusion_config
+    from vllm_omni.diffusion.data import DiffusionParallelConfig, OmniDiffusionConfig
+    from vllm_omni.diffusion.distributed.head_split import HeadSplitAttention, head_partitions
+    from vllm_omni.diffusion.forward_context import get_forward_context, set_forward_context
+
+    device = torch.device("cuda", rank)
+    current_omni_platform.set_device(device)
+    init_distributed_environment(world_size=world, rank=rank, local_rank=rank, distributed_init_method=init_method)
+    initialize_model_parallel(data_parallel_size=1, sequence_parallel_size=world, ulysses_degree=world)
+    try:
+        cfg = OmniDiffusionConfig.from_kwargs(
+            enforce_eager=True,
+            parallel_config=DiffusionParallelConfig(ulysses_degree=world, ulysses_a2a_permute=True),
+            diffusion_attention_backend="FLASH_ATTN",
+        )
+        with set_current_diffusion_config(cfg), set_forward_context(omni_diffusion_config=cfg), torch.inference_mode():
+            shard, heads, dim = 64, 8 * world, 64
+            layer = Attention(heads, dim, False, dim**-0.5)
+            pg = get_sp_group().ulysses_group
+            torch.manual_seed(1024)
+            prefix = torch.randn(1, 13, heads, dim * 3, device=device, dtype=torch.bfloat16).chunk(3, dim=-1)
+            torch.manual_seed(42 + rank)
+            q, k, v = torch.randn(1, shard, heads, dim * 3, device=device, dtype=torch.bfloat16).chunk(3, dim=-1)
+            rows = shard * world
+            cu = torch.tensor([0, rows - 8, rows], dtype=torch.int32, device=device)
+            packed = AttentionMetadata(
+                packed_padding=PackedPaddingMetadata(rows - 8, rows - 8, cu[:2], cu[:2]),
+                extra=dict(cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=rows - 8, max_seqlen_k=rows - 8),
+            )
+            decode = AttentionMetadata(joint_query=prefix[0][:, :0], joint_key=prefix[1], joint_value=prefix[2])
+            prefill = replace(decode, joint_query=prefix[0], full_attn_spans=[[(0, 13), (13, 13 + rows)]])
+            for ratio, metadata in (("3:5", decode), ("1:6:1", packed), ("auto", prefill)):
+                layer.head_split = HeadSplitAttention(head_partitions(ratio, heads, world), pg)
+                with set_forward_context(omni_diffusion_config=cfg):
+                    previous = None
+                    calls = 4 * len(layer.head_split.candidates) + 1 if ratio == "auto" else 2
+                    for i in range(calls):
+                        incoming = q + i / 10
+                        md = decode if ratio == "auto" and i == calls - 1 else metadata
+                        expected = layer._forward_impl(incoming, k, v, replace(md))
+                        actual = layer(incoming, k, v, replace(md))
+                        torch.testing.assert_close(actual, expected, atol=0.01, rtol=0.01)
+                        if previous is not None:
+                            torch.testing.assert_close(previous[0], previous[1], rtol=0, atol=0)
+                        previous = actual, actual.clone()
+                    if ratio == "auto":
+                        winner = get_forward_context().head_split_trials.winner
+                        assert winner is not None
+                        peers = [None] * world
+                        dist.all_gather_object(peers, winner, group=pg)
+                        assert all(w == winner for w in peers)
+            assert get_forward_context().head_split_trials is None
+            # The bound is on the global sequence, independent of the SP degree.
+            shard_over_limit = 8576 // world + 1
+            oversized = q[:, :1].expand(-1, shard_over_limit, -1, -1)
+            for ratio in ("3:5", "auto"):
+                with set_forward_context(omni_diffusion_config=cfg):
+                    controller = HeadSplitAttention(head_partitions(ratio, heads, world), pg)
+                    layer.head_split = controller
+                    with pytest.raises(ValueError, match="8576 global packed rows"):
+                        layer(oversized, oversized, oversized, packed)
+                    assert controller.graphs is None
+    finally:
+        destroy_distributed_env()
+
+
+@pytest.mark.parametrize(
+    "world",
+    [
+        pytest.param(2, marks=hardware_marks(res={"cuda": "H100"}, num_cards=2)),
+        pytest.param(4, marks=hardware_marks(res={"cuda": "H100"}, num_cards=4)),
+    ],
+)
+def test_head_split_attention(tmp_path, world):
+    if torch.accelerator.device_count() < world:
+        pytest.skip(f"Requires {world} peer-accessible CUDA GPUs with FlashAttention-3")
+    torch.multiprocessing.spawn(_split_worker, args=(f"file://{tmp_path / 'rendezvous'}", world), nprocs=world)

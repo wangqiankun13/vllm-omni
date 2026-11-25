@@ -792,6 +792,7 @@ DIFFUSION_PARALLEL_KNBS = [
     ("ulysses_degree", 4),
     ("ulysses_mode", "advanced_uaa"),
     ("ulysses_a2a_permute", True),
+    ("ulysses_head_split", "3:5"),
     ("ring_degree", 2),
     ("allgather_degree", 8),
     ("use_hsdp", True),
@@ -822,6 +823,8 @@ def test_from_cli_args_applies_diffusion_parallel_knobs():
         # Forward the preserved value rather than the table literal, so the
         # second assertion fails if ``from_cli_args`` dropped the knob.
         factory_kwargs = {knob: getattr(engine_args, knob)}
+        if knob == "ulysses_head_split":
+            factory_kwargs.update(ulysses_degree=4, ulysses_a2a_permute=True)
         if knob == "use_hsdp":
             # Standalone HSDP (all other parallelism at 1) cannot
             # auto-calculate its shard size; pass one explicitly.

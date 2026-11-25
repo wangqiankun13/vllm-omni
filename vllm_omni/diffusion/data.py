@@ -306,6 +306,9 @@ class DiffusionParallelConfig:
     allocator, Triton-Ascend and a symmetric-memory runtime.
     """
 
+    ulysses_head_split: str | None = None
+    """Optional fixed head ratio or 'auto' for per-request CE overlap selection."""
+
     cfg_parallel_size: int = 1
     """Number of ranks used to execute guidance passes in parallel."""
 
@@ -397,6 +400,22 @@ class DiffusionParallelConfig:
         assert self.ulysses_mode in {"strict", "advanced_uaa"}, (
             f"ulysses_mode must be one of {{'strict','advanced_uaa'}}, but got {self.ulysses_mode!r}."
         )
+
+        if self.ulysses_head_split is not None:
+            from vllm_omni.diffusion.distributed.head_split import parse_head_split
+
+            parse_head_split(self.ulysses_head_split)
+            if (
+                self.ulysses_degree not in (2, 4)
+                or self.ulysses_mode != "strict"
+                or not self.ulysses_a2a_permute
+                or self.sequence_parallel_size != self.ulysses_degree
+                or self.tensor_parallel_size != 1
+                or self.cfg_parallel_size != 1
+                or self.pipeline_parallel_size != 1
+                or self.use_hsdp
+            ):
+                raise ValueError("ulysses_head_split requires strict CE Ulysses SP2 or SP4, TP1, PP1 and CFG1")
 
         # Validate HSDP configuration
         if self.use_hsdp:

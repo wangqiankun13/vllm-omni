@@ -444,6 +444,10 @@ class DiffusionModelRunner(DiffusionStagePayloadMixin):
                 )
                 if initialize_lora is not None and getattr(self.pipeline, "requires_early_lora_init", False) is True:
                     initialize_lora()
+        if getattr(getattr(self.od_config, "parallel_config", None), "ulysses_head_split", None) is not None:
+            from vllm_omni.diffusion.distributed.head_split import configure_head_split
+
+            configure_head_split(self.pipeline, self.od_config)
         time_after_load = time.perf_counter()
 
         logger.info(
@@ -916,6 +920,11 @@ class DiffusionModelRunner(DiffusionStagePayloadMixin):
         assert self.pipeline is not None, "Model not loaded. Call load_model() first."
         if not reqs:
             return BatchRunnerOutput.from_list([])
+        if (
+            len(reqs) > 1
+            and getattr(getattr(od_config, "parallel_config", None), "ulysses_head_split", None) is not None
+        ):
+            raise ValueError("ulysses_head_split supports one diffusion request per batch")
         for req in reqs:
             if req.prompt is None:
                 raise ValueError("Cannot execute model with empty prompt")
